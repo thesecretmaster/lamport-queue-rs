@@ -95,6 +95,12 @@ struct AtomicLamportQueue<D: Clone + Default + Sized> {
     v: UnsafeCell<LamportQueue<D>>
 }
 
+
+
+fn mut_thru_arc<D: Sized + Clone + Default>(a: &mut Arc<AtomicLamportQueue<D>>) -> &mut LamportQueue<D> {
+    unsafe { a.v.get().as_mut().unwrap() }
+}
+
 impl<D: Default + Sized + Clone> Deref for AtomicLamportQueue<D> {
     type Target = LamportQueue<D>;
 
@@ -102,87 +108,29 @@ impl<D: Default + Sized + Clone> Deref for AtomicLamportQueue<D> {
         unsafe { self.v.get().as_ref().unwrap() }
     }
 }
-
 impl<D: Default + Sized + Clone> DerefMut for AtomicLamportQueue<D> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.v.get().as_mut().unwrap() }
     }
 }
 
-fn mut_thru_arc<'a, D: Sized + Clone + Default>(a: &Arc<AtomicLamportQueue<D>>) -> &'a mut LamportQueue<D> {
-    unsafe { a.v.get().as_mut().unwrap() }
+impl<D: Clone + Default + Sized> AtomicLamportQueue<D> {
+    fn new(capacity: usize) -> AtomicLamportQueue<D> {
+        Self {
+            v: UnsafeCell::new(LamportQueue::new(capacity))
+        }
+    }
 }
-
-//impl<D: Default + Sized + Clone> DerefMut for Arc<AtomicLamportQueue<D>> {
-//    fn deref_mut(&mut self) -> &mut Self::Target {
-//        unsafe { self.v.get().as_mut().unwrap() }
-//    }
-//}
-
-//impl<D: Clone + Default + Sized> ImmutableQueue<D> {
-//    fn new(capacity: usize) -> ImmutableQueue<D> {
-//        Self {
-//            v: UnsafeCell::new(LamportQueue::new(capacity))
-//        }
-//    }
-//}
-
-//impl<D: Clone + Default + Sized> ImmutableQueue<D> for AtomicLamportQueue<D> {
-//    fn new(capacity: usize) -> AtomicLamportQueue<D> {
-//        Self {
-//            v: UnsafeCell::new(LamportQueue::new(capacity))
-//        }
-//    }
-//
-//    fn push(&self, d: D) -> bool {
-//        unsafe {
-//            (*self.v.get()).push(d)
-//        }
-//    }
-//
-//    fn pop(&self) -> Option<D> {
-//        unsafe {
-//            (*self.v.get()).pop()
-//        }
-//    }
-//
-//    fn closed(&self) -> bool {
-//        unsafe {
-//            (*self.v.get()).closed()
-//        }
-//    }
-//
-//    fn close(&self) {
-//        unsafe {
-//            (*self.v.get()).close()
-//        }
-//    }
-//
-//    fn capacity(&self) -> usize {
-//        unsafe {
-//            (*self.v.get()).capacity()
-//        }
-//    }
-//
-//    fn len(&self) -> usize {
-//        unsafe {
-//            (*self.v.get()).len()
-//        }
-//    }
-//}
 
 unsafe impl<T: Clone + Default + Sized> Sync for AtomicLamportQueue<T> {}
 
 const SIZE: usize = 10000;
 
 fn main() {
-    let q: AtomicLamportQueue<u32> =
-        AtomicLamportQueue {
-            v: UnsafeCell::new(LamportQueue::new(3))
-        };
+    let q: AtomicLamportQueue<u32> = AtomicLamportQueue::new(3);
     let shared_q = Arc::new(q);
-    let sender_handle = Arc::clone(&shared_q);
-    let reciever_handle = Arc::clone(&shared_q);
+    let mut sender_handle = Arc::clone(&shared_q);
+    let mut reciever_handle = Arc::clone(&shared_q);
 
     let mut rng_list = [0; SIZE];
     let mut recieved_numbers = Vec::with_capacity(SIZE);
@@ -193,16 +141,16 @@ fn main() {
     let sender = thread::spawn(move || {
         for i in &rng_list {
             loop {
-                if mut_thru_arc(&sender_handle).push(*i) {
+                if mut_thru_arc(&mut sender_handle).push(*i) {
                     break
                 }
             }
         }
-        mut_thru_arc(&sender_handle).close();
+        mut_thru_arc(&mut sender_handle).close();
     });
     let reciever = thread::spawn(move || {
         loop {
-            match mut_thru_arc(&reciever_handle).pop() {
+            match mut_thru_arc(&mut reciever_handle).pop() {
                 None => (),
                 Some(i) => {
                     recieved_numbers.push(i)
