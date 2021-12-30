@@ -1,6 +1,7 @@
 use rand::Rng;
 use std::sync::atomic;
 use std::sync::mpsc;
+use clap::{App, Arg};
 
 mod lamport_queue;
 mod srsw_queue_verifier;
@@ -8,12 +9,28 @@ mod srsw_queue_verifier;
 use lamport_queue::LamportQueue;
 use srsw_queue_verifier::VerificationChecker;
 
-const QUEUE_LEN: usize = 3;
-
 fn main() {
+    let matches = App::new("tsm's lamport queue")
+                      .version("0.0.1")
+                      .author("thesecretmaster <thesecretmaster@dvtk.me>")
+                      .about("Simple single reader / singler writer lamport queue performance testing (vs mpsc::sync_channel)")
+                      .arg(Arg::with_name("queue length")
+                           .short("l")
+                           .long("queue-length")
+                           .value_name("QUEUE LENGTH")
+                           .help("Sets the queue length (both lamport queues and mpsc::sync_channel have queue lengths)")
+                           .takes_value(true)
+                           .required(true)
+                           .default_value("3"))
+                      .get_matches();
+
+    let queue_len: usize = clap::value_t!(matches.value_of("queue length"), usize).expect("Positive integer is required for queue length");
+
+    println!("Running tests with queue length of {}", queue_len);
+
     // Create the queue and prepare it for sharing
-    let (mut reciever_handle, mut sender_handle) = LamportQueue::new(QUEUE_LEN);
-    let (tx, rx) = mpsc::sync_channel(QUEUE_LEN);
+    let (mut reciever_handle, mut sender_handle) = LamportQueue::new(queue_len);
+    let (tx, rx) = mpsc::sync_channel(queue_len);
 
     // Generate a list of random numbers to send down the queue
     let mut srsw_queue_verifier: VerificationChecker<usize> = VerificationChecker::new(100000, |_| rand::thread_rng().gen());
