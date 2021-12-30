@@ -21,13 +21,14 @@ pub struct LamportQueueWriter<D: Default + Clone> {
 }
 
 // Most of the methods on Reader and Writer are equally valid on either
-// and simply read the underlying Queue, so I treat Reader/Writer
+// and simply read the underlying Queue, so we use Reader/Writer
 // as smart pointers and use Deref to make them callable.
 impl<D: Default + Clone> LamportQueue<D> {
+    // Allocate the queue and return handles to enqueue/dequeue
+    // Use owned handles to ensure there is only one reader and one writer
     pub fn new(capacity: usize) -> (LamportQueueReader<D>, LamportQueueWriter<D>) {
-        let buffer = vec![D::default(); capacity];
         let q = Arc::new(Self {
-            elements: buffer.into_boxed_slice(),
+            elements: vec![D::default(); capacity].into_boxed_slice(),
             head: 0,
             tail: 0,
             open: true,
@@ -43,6 +44,7 @@ impl<D: Default + Clone> LamportQueue<D> {
     }
 
     pub fn capacity(&self) -> usize {
+        // Don't need a volatile read here because it should be constant
         self.elements.len()
     }
 

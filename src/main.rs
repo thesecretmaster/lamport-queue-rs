@@ -7,6 +7,7 @@ mod lamport_queue;
 mod srsw_queue_verifier;
 
 use lamport_queue::LamportQueue;
+use lamport_queue::{LamportQueueReader, LamportQueueWriter};
 use srsw_queue_verifier::VerificationChecker;
 
 fn main() {
@@ -29,15 +30,47 @@ fn main() {
     println!("Running tests with queue length of {}", queue_len);
 
     // Create the queue and prepare it for sharing
-    let (mut reciever_handle, mut sender_handle) = LamportQueue::new(queue_len);
+    let (reciever_handle, sender_handle) = LamportQueue::new(queue_len);
     let (tx, rx) = mpsc::sync_channel(queue_len);
 
     // Generate a list of random numbers to send down the queue
-    let mut srsw_queue_verifier: VerificationChecker<usize> = VerificationChecker::new(100000, |_| rand::thread_rng().gen());
-    let mut mpsc_verifier = srsw_queue_verifier.clone_send();
+    let srsw_queue_verifier: VerificationChecker<usize> = VerificationChecker::new(100000, |_| rand::thread_rng().gen());
+    let mpsc_verifier = srsw_queue_verifier.clone_send();
 
     atomic::compiler_fence(atomic::Ordering::SeqCst);
 
+    test_lamport(srsw_queue_verifier, sender_handle, reciever_handle);
+
+    // This probably does nothing, but it's here just in case :P
+    atomic::compiler_fence(atomic::Ordering::SeqCst);
+
+    test_mpsc(mpsc_verifier, tx, rx);
+}
+
+fn test_mpsc(mut mpsc_verifier: VerificationChecker<usize>, tx: mpsc::SyncSender<usize>, rx: mpsc::Receiver<usize>) {
+    mpsc_verifier.run_sender(move |sl| {
+        for i in sl.into_iter() {
+            // Continually retry until the push is sucessful
+            while tx.send(*i).is_err() {}
+        }
+        // Automatically closes when it's dropped
+    });
+
+    mpsc_verifier.run_reciever(move |rl| {
+        // Continually pop off the queue until it's closed and empty
+        loop {
+            match rx.recv() {
+                Err(_) => break,
+                Ok(i) => rl.push(i),
+            }
+        }
+    });
+
+    println!("MPSC:");
+    mpsc_verifier.verify();
+}
+
+fn test_lamport(mut srsw_queue_verifier: VerificationChecker<usize>, mut sender_handle: LamportQueueWriter<usize>, mut reciever_handle: LamportQueueReader<usize>) {
     srsw_queue_verifier.run_sender(move |sl| {
         for i in sl.into_iter() {
             // Continually retry until the push is sucessful
@@ -59,27 +92,4 @@ fn main() {
 
     println!("SRSW:");
     srsw_queue_verifier.verify();
-
-    atomic::compiler_fence(atomic::Ordering::SeqCst);
-
-    mpsc_verifier.run_sender(move |sl| {
-        for i in sl.into_iter() {
-            // Continually retry until the push is sucessful
-            while tx.send(*i).is_err() {}
-        }
-        // Automatically closes when it's dropped
-    });
-
-    mpsc_verifier.run_reciever(move |rl| {
-        // Continually pop off the queue until it's closed and empty
-        loop {
-            match rx.recv() {
-                Err(_) => break,
-                Ok(i) => rl.push(i),
-            }
-        }
-    });
-
-    println!("MPSC:");
-    mpsc_verifier.verify();
 }
