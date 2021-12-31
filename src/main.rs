@@ -23,18 +23,27 @@ fn main() {
                            .takes_value(true)
                            .required(true)
                            .default_value("3"))
+                      .arg(Arg::with_name("test list length")
+                           .short("t")
+                           .long("test-length")
+                           .value_name("TEST LENGTH")
+                           .help("Sets the length of the test list (the number of elements that will be sent through the queue)")
+                           .takes_value(true)
+                           .required(true)
+                           .default_value("65536")) // Nothing special about this, just wanted a power of 2 for fun :P
                       .get_matches();
 
     let queue_len: usize = clap::value_t!(matches.value_of("queue length"), usize).expect("Positive integer is required for queue length");
+    let test_len: usize = clap::value_t!(matches.value_of("test list length"), usize).expect("Positive integer is required for test list length");
 
-    println!("Running tests with queue length of {}", queue_len);
+    println!("Running tests with queue length of {} and test list length of {}", queue_len, test_len);
 
     // Create the queue and prepare it for sharing
     let (reciever_handle, sender_handle) = LamportQueue::new(queue_len);
     let (tx, rx) = mpsc::sync_channel(queue_len);
 
     // Generate a list of random numbers to send down the queue
-    let spsc_queue_checker: SPSCChecker<usize> = SPSCChecker::new(100000, |_| rand::thread_rng().gen());
+    let spsc_queue_checker: SPSCChecker<usize> = SPSCChecker::new(test_len, |_| rand::thread_rng().gen());
     let mpsc_checker = spsc_queue_checker.clone_send();
 
     atomic::compiler_fence(atomic::Ordering::SeqCst);
@@ -51,8 +60,9 @@ fn test_mpsc(mut mpsc_checker: SPSCChecker<usize>, tx: mpsc::SyncSender<usize>, 
     mpsc_checker.run_reciever(move |rl| {
         // Continually pop off the queue until it's closed and empty
         loop {
-            match rx.recv() {
-                Err(_) => break,
+            match rx.try_recv() {
+                Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => continue,
                 Ok(i) => rl.push(i),
             }
         }
@@ -61,7 +71,7 @@ fn test_mpsc(mut mpsc_checker: SPSCChecker<usize>, tx: mpsc::SyncSender<usize>, 
     mpsc_checker.run_sender(move |sl| {
         for i in sl.into_iter() {
             // Continually retry until the push is sucessful
-            while tx.send(*i).is_err() {}
+            while tx.try_send(*i).is_err() {}
         }
         // Automatically closes when it's dropped
     });
