@@ -48,14 +48,6 @@ fn main() {
 }
 
 fn test_mpsc(mut mpsc_verifier: VerificationChecker<usize>, tx: mpsc::SyncSender<usize>, rx: mpsc::Receiver<usize>) {
-    mpsc_verifier.run_sender(move |sl| {
-        for i in sl.into_iter() {
-            // Continually retry until the push is sucessful
-            while tx.send(*i).is_err() {}
-        }
-        // Automatically closes when it's dropped
-    });
-
     mpsc_verifier.run_reciever(move |rl| {
         // Continually pop off the queue until it's closed and empty
         loop {
@@ -66,20 +58,19 @@ fn test_mpsc(mut mpsc_verifier: VerificationChecker<usize>, tx: mpsc::SyncSender
         }
     });
 
+    mpsc_verifier.run_sender(move |sl| {
+        for i in sl.into_iter() {
+            // Continually retry until the push is sucessful
+            while tx.send(*i).is_err() {}
+        }
+        // Automatically closes when it's dropped
+    });
+
     println!("MPSC:");
     mpsc_verifier.verify();
 }
 
 fn test_lamport(mut srsw_queue_verifier: VerificationChecker<usize>, mut sender_handle: LamportQueueWriter<usize>, mut reciever_handle: LamportQueueReader<usize>) {
-    srsw_queue_verifier.run_sender(move |sl| {
-        for i in sl.into_iter() {
-            // Continually retry until the push is sucessful
-            while !sender_handle.push(*i) {}
-        }
-        // Close the loop to allow the reciever to terminate
-        sender_handle.close();
-    });
-
     srsw_queue_verifier.run_reciever(move |rl| {
         // Continually pop off the queue until it's closed and empty
         while !(reciever_handle.closed() && reciever_handle.len() == 0) {
@@ -88,6 +79,15 @@ fn test_lamport(mut srsw_queue_verifier: VerificationChecker<usize>, mut sender_
                 Some(i) => rl.push(i),
             }
         }
+    });
+
+    srsw_queue_verifier.run_sender(move |sl| {
+        for i in sl.into_iter() {
+            // Continually retry until the push is sucessful
+            while !sender_handle.push(*i) {}
+        }
+        // Close the loop to allow the reciever to terminate
+        sender_handle.close();
     });
 
     println!("SRSW:");
