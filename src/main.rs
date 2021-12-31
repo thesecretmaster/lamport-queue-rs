@@ -4,11 +4,11 @@ use std::sync::mpsc;
 use clap::{App, Arg};
 
 mod lamport_queue;
-mod srsw_queue_verifier;
+mod spsc_queue_checker;
 
 use lamport_queue::LamportQueue;
 use lamport_queue::{LamportQueueReader, LamportQueueWriter};
-use srsw_queue_verifier::VerificationChecker;
+use spsc_queue_checker::SPSCChecker;
 
 fn main() {
     let matches = App::new("tsm's lamport queue")
@@ -34,21 +34,21 @@ fn main() {
     let (tx, rx) = mpsc::sync_channel(queue_len);
 
     // Generate a list of random numbers to send down the queue
-    let srsw_queue_verifier: VerificationChecker<usize> = VerificationChecker::new(100000, |_| rand::thread_rng().gen());
-    let mpsc_verifier = srsw_queue_verifier.clone_send();
+    let spsc_queue_checker: SPSCChecker<usize> = SPSCChecker::new(100000, |_| rand::thread_rng().gen());
+    let mpsc_checker = spsc_queue_checker.clone_send();
 
     atomic::compiler_fence(atomic::Ordering::SeqCst);
 
-    test_lamport(srsw_queue_verifier, sender_handle, reciever_handle);
+    test_lamport(spsc_queue_checker, sender_handle, reciever_handle);
 
     // This probably does nothing, but it's here just in case :P
     atomic::compiler_fence(atomic::Ordering::SeqCst);
 
-    test_mpsc(mpsc_verifier, tx, rx);
+    test_mpsc(mpsc_checker, tx, rx);
 }
 
-fn test_mpsc(mut mpsc_verifier: VerificationChecker<usize>, tx: mpsc::SyncSender<usize>, rx: mpsc::Receiver<usize>) {
-    mpsc_verifier.run_reciever(move |rl| {
+fn test_mpsc(mut mpsc_checker: SPSCChecker<usize>, tx: mpsc::SyncSender<usize>, rx: mpsc::Receiver<usize>) {
+    mpsc_checker.run_reciever(move |rl| {
         // Continually pop off the queue until it's closed and empty
         loop {
             match rx.recv() {
@@ -58,7 +58,7 @@ fn test_mpsc(mut mpsc_verifier: VerificationChecker<usize>, tx: mpsc::SyncSender
         }
     });
 
-    mpsc_verifier.run_sender(move |sl| {
+    mpsc_checker.run_sender(move |sl| {
         for i in sl.into_iter() {
             // Continually retry until the push is sucessful
             while tx.send(*i).is_err() {}
@@ -67,11 +67,11 @@ fn test_mpsc(mut mpsc_verifier: VerificationChecker<usize>, tx: mpsc::SyncSender
     });
 
     println!("MPSC:");
-    mpsc_verifier.verify();
+    mpsc_checker.check();
 }
 
-fn test_lamport(mut srsw_queue_verifier: VerificationChecker<usize>, mut sender_handle: LamportQueueWriter<usize>, mut reciever_handle: LamportQueueReader<usize>) {
-    srsw_queue_verifier.run_reciever(move |rl| {
+fn test_lamport(mut spsc_queue_checker: SPSCChecker<usize>, mut sender_handle: LamportQueueWriter<usize>, mut reciever_handle: LamportQueueReader<usize>) {
+    spsc_queue_checker.run_reciever(move |rl| {
         // Continually pop off the queue until it's closed and empty
         while !(reciever_handle.closed() && reciever_handle.len() == 0) {
             match reciever_handle.pop() {
@@ -81,7 +81,7 @@ fn test_lamport(mut srsw_queue_verifier: VerificationChecker<usize>, mut sender_
         }
     });
 
-    srsw_queue_verifier.run_sender(move |sl| {
+    spsc_queue_checker.run_sender(move |sl| {
         for i in sl.into_iter() {
             // Continually retry until the push is sucessful
             while !sender_handle.push(*i) {}
@@ -90,6 +90,6 @@ fn test_lamport(mut srsw_queue_verifier: VerificationChecker<usize>, mut sender_
         sender_handle.close();
     });
 
-    println!("SRSW:");
-    srsw_queue_verifier.verify();
+    println!("SPSC:");
+    spsc_queue_checker.check();
 }
